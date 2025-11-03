@@ -7,8 +7,8 @@ import sys
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
-from telegram import Update, Message
-from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, MessageHandler, CommandHandler, ContextTypes, filters, CallbackQueryHandler
 from telegram.error import TelegramError
 
 # 添加项目根目录到 Python 路径
@@ -529,6 +529,10 @@ class TelegramNoteTaker:
         if self.config.ENABLE_AI_SUMMARY:
             application.add_handler(CommandHandler("summary", self.summary_command))
             application.add_handler(CommandHandler("summary_history", self.summary_history_command))
+            application.add_handler(CommandHandler("menu", self.menu_command))
+            
+        # 添加回调查询处理器
+        application.add_handler(CallbackQueryHandler(self.button_callback))
         
         # 添加消息处理器
         application.add_handler(MessageHandler(

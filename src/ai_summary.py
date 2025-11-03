@@ -98,14 +98,24 @@ class OpenAIProvider(AIProvider):
             'Content-Type': 'application/json',
         }
         
+        # 构建API请求数据 - 使用最兼容的参数
         data = {
             'model': self.model,
             'messages': [
                 {'role': 'user', 'content': prompt}
-            ],
-            'temperature': 0.3,
-            'max_tokens': 2000
+            ]
         }
+        
+        # 根据模型类型添加token限制参数
+        if 'gpt-5' in self.model.lower():
+            # GPT-5只使用确认可用的参数
+            data['max_completion_tokens'] = 2000
+        else:
+            # 传统GPT模型参数
+            data.update({
+                'max_tokens': 2000,
+                'temperature': 0.3
+            })
         
         async with aiohttp.ClientSession() as session:
             async with session.post(
