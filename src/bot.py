@@ -507,6 +507,313 @@ class TelegramNoteTaker:
         
         await message.reply_text(status_text)
     
+    async def menu_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /menu 命令 - 显示交互式菜单"""
+        message = update.message
+        if not message:
+            return
+        
+        # 检查是否为管理员
+        if not self._is_admin(message.from_user.id):
+            await message.reply_text("⚠️ 只有管理员可以使用此命令")
+            return
+        
+        if not self.config.ENABLE_AI_SUMMARY:
+            await message.reply_text("⚠️ AI 总结功能未启用")
+            return
+        
+        # 创建主菜单键盘
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 获取24小时总结", callback_data="summary_24h"),
+                InlineKeyboardButton("📈 获取3天总结", callback_data="summary_3d")
+            ],
+            [
+                InlineKeyboardButton("📋 查看已保存的总结", callback_data="get_saved")
+            ],
+            [
+                InlineKeyboardButton("❌ 关闭菜单", callback_data="close_menu")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        menu_text = """
+🤖 **Telegram Note Taker 控制面板**
+
+请选择您需要的功能：
+
+📊 **实时总结** - 分析最新的对话记录
+📋 **已保存总结** - 查看历史总结记录
+
+👆 请点击下方按钮进行操作
+        """
+        
+        await message.reply_text(menu_text, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理按钮回调"""
+        query = update.callback_query
+        await query.answer()
+        
+        # 检查是否为管理员
+        if not self._is_admin(query.from_user.id):
+            await query.edit_message_text("⚠️ 只有管理员可以使用此功能")
+            return
+        
+        data = query.data
+        
+        if data == "close_menu":
+            await query.edit_message_text("✅ 菜单已关闭")
+            return
+        
+        if data == "summary_24h":
+            await self._show_group_selection(query, "24h")
+        elif data == "summary_3d":
+            await self._show_group_selection(query, "3d")
+        elif data == "get_saved":
+            await self._show_saved_summary_options(query)
+        elif data.startswith("group_"):
+            # 处理群组选择
+            parts = data.split("_")
+            if len(parts) >= 3:
+                period = parts[1]  # 24h 或 3d
+                chat_id = int(parts[2])
+                await self._generate_realtime_summary(query, chat_id, period)
+        elif data.startswith("saved_"):
+            # 处理已保存总结的选择
+            parts = data.split("_")
+            if len(parts) >= 3:
+                period = parts[1]  # 1d 或 3d
+                chat_id = int(parts[2]) if parts[2] != "all" else None
+                await self._show_saved_summaries(query, chat_id, period)
+        elif data == "back_main":
+            # 返回主菜单
+            await self.menu_command(update, context)
+    
+    async def _show_group_selection(self, query, period: str):
+        """显示群组选择界面"""
+        # 获取可用的群组
+        available_groups = self._get_available_groups()
+        
+        if not available_groups:
+            await query.edit_message_text("❌ 没有找到可用的群组数据")
+            return
+        
+        period_text = "24小时" if period == "24h" else "3天"
+        keyboard = []
+        
+        # 为每个群组添加按钮
+        for chat_id, group_info in available_groups.items():
+            group_name = group_info.get('title', f'群组 {chat_id}')[:30]  # 限制长度
+            callback_data = f"group_{period}_{chat_id}"
+            keyboard.append([InlineKeyboardButton(f"📱 {group_name}", callback_data=callback_data)])
+        
+        # 添加返回按钮
+        keyboard.append([InlineKeyboardButton("🔙 返回主菜单", callback_data="back_main")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = f"""
+📊 **选择要生成{period_text}总结的群组**
+
+以下是有消息记录的群组：
+
+👆 请选择一个群组来生成实时AI总结
+        """
+        
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    async def _show_saved_summary_options(self, query):
+        """显示已保存总结的选项"""
+        keyboard = [
+            [
+                InlineKeyboardButton("📅 过去1天", callback_data="saved_1d_all"),
+                InlineKeyboardButton("📈 过去3天", callback_data="saved_3d_all")
+            ],
+            [
+                InlineKeyboardButton("🔙 返回主菜单", callback_data="back_main")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = """
+📋 **查看已保存的总结**
+
+选择时间范围：
+
+📅 **过去1天** - 查看昨天的总结
+📈 **过去3天** - 查看最近3天的总结
+
+👆 请选择时间范围
+        """
+        
+        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+    
+    async def _generate_realtime_summary(self, query, chat_id: int, period: str):
+        """生成实时总结"""
+        period_text = "24小时" if period == "24h" else "3天"
+        
+        # 显示处理中消息
+        await query.edit_message_text(f"🤖 正在生成{period_text}总结，请稍候...")
+        
+        try:
+            # 计算日期范围
+            end_date = datetime.now()
+            if period == "24h":
+                start_date = end_date - timedelta(days=1)
+            else:  # 3d
+                start_date = end_date - timedelta(days=3)
+            
+            # 获取消息数据
+            messages = self._get_messages_in_range(chat_id, start_date, end_date)
+            
+            if not messages:
+                await query.edit_message_text(f"❌ 在{period_text}内没有找到消息记录")
+                return
+            
+            if len(messages) < self.config.MIN_MESSAGES_FOR_SUMMARY:
+                await query.edit_message_text(
+                    f"⚠️ 消息数量不足（{len(messages)}条），最少需要{self.config.MIN_MESSAGES_FOR_SUMMARY}条消息"
+                )
+                return
+            
+            # 使用AI生成总结
+            if self.ai_summarizer:
+                summary = await self.ai_summarizer.generate_daily_summary(chat_id, end_date)
+                
+                if summary:
+                    # 限制总结长度以适应Telegram消息限制
+                    if len(summary) > 4000:
+                        summary = summary[:4000] + "\n\n... (总结已截断)"
+                    
+                    group_name = self._get_group_name(chat_id)
+                    result_text = f"""
+📊 **{group_name} - {period_text}实时总结**
+
+{summary}
+
+---
+⏰ 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📨 消息数量: {len(messages)}条
+                    """
+                    
+                    # 添加返回按钮
+                    keyboard = [[InlineKeyboardButton("🔙 返回主菜单", callback_data="back_main")]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await query.edit_message_text(result_text, reply_markup=reply_markup)
+                else:
+                    await query.edit_message_text("❌ AI总结生成失败，请稍后重试")
+            else:
+                await query.edit_message_text("❌ AI总结服务不可用")
+                
+        except Exception as e:
+            self.logger.error(f"生成实时总结时出错: {e}")
+            await query.edit_message_text(f"❌ 生成总结时发生错误: {str(e)}")
+    
+    async def _show_saved_summaries(self, query, chat_id: Optional[int], period: str):
+        """显示已保存的总结"""
+        period_text = "1天" if period == "1d" else "3天"
+        
+        try:
+            # 这里应该从存储中获取已保存的总结
+            # 暂时显示占位信息
+            text = f"""
+📋 **过去{period_text}的已保存总结**
+
+⚠️ 此功能正在开发中...
+
+当前会显示：
+- 自动生成的日常总结
+- 手动保存的总结记录
+- 总结的生成时间和统计信息
+
+---
+💡 提示：使用实时总结功能可以立即生成最新的对话分析
+            """
+            
+            keyboard = [[InlineKeyboardButton("🔙 返回主菜单", callback_data="back_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            
+        except Exception as e:
+            self.logger.error(f"获取已保存总结时出错: {e}")
+            await query.edit_message_text("❌ 获取已保存总结失败")
+    
+    def _get_available_groups(self) -> Dict[int, Dict[str, Any]]:
+        """获取有消息记录的群组"""
+        try:
+            groups = {}
+            data_dir = self.config.DATA_DIR
+            
+            if not os.path.exists(data_dir):
+                return groups
+            
+            # 扫描数据文件
+            for filename in os.listdir(data_dir):
+                if filename.startswith('chat_') and filename.endswith('.json'):
+                    try:
+                        parts = filename.split('_')
+                        if len(parts) >= 3:
+                            chat_id = int(parts[1])
+                            
+                            # 尝试读取文件获取群组信息
+                            filepath = os.path.join(data_dir, filename)
+                            with open(filepath, 'r', encoding='utf-8') as f:
+                                import json
+                                messages = json.load(f)
+                                if messages:
+                                    groups[chat_id] = {
+                                        'title': messages[0].get('chat_title', f'群组 {chat_id}'),
+                                        'message_count': len(messages)
+                                    }
+                    except (ValueError, json.JSONDecodeError, IOError):
+                        continue
+            
+            return groups
+            
+        except Exception as e:
+            self.logger.error(f"获取群组信息时出错: {e}")
+            return {}
+    
+    def _get_messages_in_range(self, chat_id: int, start_date: datetime, end_date: datetime):
+        """获取指定时间范围内的消息"""
+        try:
+            all_messages = []
+            data_dir = self.config.DATA_DIR
+            
+            # 遍历日期范围内的所有日期
+            current_date = start_date.date()
+            end_date_only = end_date.date()
+            
+            while current_date <= end_date_only:
+                date_str = current_date.strftime('%Y%m%d')
+                filename = f'chat_{chat_id}_{date_str}.json'
+                filepath = os.path.join(data_dir, filename)
+                
+                if os.path.exists(filepath):
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            import json
+                            messages = json.load(f)
+                            all_messages.extend(messages)
+                    except (json.JSONDecodeError, IOError):
+                        pass
+                
+                current_date += timedelta(days=1)
+            
+            return all_messages
+            
+        except Exception as e:
+            self.logger.error(f"获取时间范围消息时出错: {e}")
+            return []
+    
+    def _get_group_name(self, chat_id: int) -> str:
+        """获取群组名称"""
+        groups = self._get_available_groups()
+        return groups.get(chat_id, {}).get('title', f'群组 {chat_id}')
+    
     def run(self):
         """启动机器人"""
         self.logger.info("正在启动 Telegram Note Taker Bot...")
