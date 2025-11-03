@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  telegram-notetaker:
+    build: .
+    container_name: telegram-notetaker
+    restart: unless-stopped
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - ADMIN_IDS=${ADMIN_IDS:-}
+      - ALLOWED_GROUPS=${ALLOWED_GROUPS:-}
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    networks:
+      - telegram-net
+
+networks:
+  telegram-net:
+    driver: bridge
