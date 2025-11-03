@@ -46,11 +46,20 @@ class TaskScheduler:
         self.running = True
         self.logger.info("任务调度器已启动")
         
+        # 启动定时任务 - 但不在初始化时创建任务
+        # 任务将在 start_async 中创建
+    
+    async def start_async(self):
+        """异步启动调度器任务"""
+        if not self.running:
+            return
+        
         # 启动定时任务
         if self.config.ENABLE_AI_SUMMARY and self.ai_summarizer:
             task = asyncio.create_task(self._daily_summary_scheduler())
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
+            self.logger.info("AI 总结定时任务已启动")
     
     def stop(self):
         """停止调度器"""
@@ -62,8 +71,11 @@ class TaskScheduler:
         
         # 取消所有任务
         for task in self._tasks.copy():
-            task.cancel()
+            if not task.done():
+                task.cancel()
         
+        # 清空任务集合
+        self._tasks.clear()
         self.logger.info("任务调度器已停止")
     
     async def _daily_summary_scheduler(self):

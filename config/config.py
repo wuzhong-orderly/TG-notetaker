@@ -4,6 +4,27 @@ Telegram Note Taker 配置文件
 import os
 from typing import List
 
+# 自动加载 .env 文件
+def _load_env_file():
+    """加载 .env 文件中的环境变量"""
+    env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+    if os.path.exists(env_file):
+        try:
+            # 尝试使用 python-dotenv
+            from dotenv import load_dotenv
+            load_dotenv(env_file)
+        except ImportError:
+            # 如果没有 python-dotenv，手动解析
+            with open(env_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        os.environ[key.strip()] = value.strip()
+
+# 在导入时自动加载环境变量
+_load_env_file()
+
 class Config:
     """应用程序配置类"""
     
@@ -11,16 +32,30 @@ class Config:
     BOT_TOKEN: str = os.getenv('TELEGRAM_BOT_TOKEN', '')
     
     # 管理员用户ID列表 (可以管理bot的用户)
-    ADMIN_IDS: List[int] = [
-        # 在这里添加管理员的 Telegram User ID
-        # 例如: 123456789, 987654321
-    ]
+    @classmethod
+    def get_admin_ids(cls) -> List[int]:
+        admin_ids_str = os.getenv('ADMIN_IDS', '')
+        if admin_ids_str:
+            try:
+                return [int(x.strip()) for x in admin_ids_str.split(',') if x.strip().isdigit()]
+            except ValueError:
+                return []
+        return []
+    
+    ADMIN_IDS: List[int] = []  # 将在运行时动态获取
     
     # 允许记录的群组ID列表 (留空表示允许所有群组)
-    ALLOWED_GROUPS: List[int] = [
-        # 在这里添加允许记录的群组ID
-        # 例如: -1001234567890, -1009876543210
-    ]
+    @classmethod
+    def get_allowed_groups(cls) -> List[int]:
+        allowed_groups_str = os.getenv('ALLOWED_GROUPS', '')
+        if allowed_groups_str:
+            try:
+                return [int(x.strip()) for x in allowed_groups_str.split(',') if x.strip().lstrip('-').isdigit()]
+            except ValueError:
+                return []
+        return []
+    
+    ALLOWED_GROUPS: List[int] = []  # 将在运行时动态获取
     
     # 数据存储设置
     DATA_DIR: str = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')

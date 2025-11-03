@@ -69,13 +69,20 @@ class TelegramNoteTaker:
     
     def _is_allowed_chat(self, chat_id: int) -> bool:
         """检查是否允许记录此群组"""
-        if not self.config.ALLOWED_GROUPS:
-            return True  # 如果没有限制，允许所有群组
-        return chat_id in self.config.ALLOWED_GROUPS
+        allowed_groups = self.config.get_allowed_groups()
+        # 默认允许所有群组，只有明确配置了限制才检查
+        if not allowed_groups:
+            print(f"✅ 允许所有群组，当前群组 ID: {chat_id}", flush=True)
+            return True
+        
+        # 如果配置了限制，则检查
+        is_allowed = chat_id in allowed_groups
+        print(f"🔍 群组权限检查: {chat_id} - {'允许' if is_allowed else '拒绝'}", flush=True)
+        return is_allowed
     
     def _is_admin(self, user_id: int) -> bool:
         """检查是否为管理员"""
-        return user_id in self.config.ADMIN_IDS
+        return user_id in self.config.get_admin_ids()
     
     def _extract_message_data(self, message: Message) -> Optional[Dict[str, Any]]:
         """提取消息数据"""
@@ -173,12 +180,32 @@ class TelegramNoteTaker:
         if not message:
             return
         
-        # 只处理群组消息
+        # 打印收到的消息基本信息
+        chat_info = f"群组: {message.chat.title}" if message.chat.title else f"Chat ID: {message.chat.id}"
+        user_info = f"{message.from_user.first_name}"
+        if message.from_user.username:
+            user_info += f" (@{message.from_user.username})"
+        
+        print(f"📨 收到消息 - {chat_info} | {user_info}", flush=True)
+        if message.text:
+            print(f"💬 内容: {message.text}", flush=True)
+        else:
+            print(f"🎵 消息类型: {self._get_message_type_description(message)}", flush=True)
+        print("-" * 50, flush=True)
+        
+        # 同时记录到日志
+        self.logger.info(f"收到消息 - {chat_info} | {user_info} | 类型: {message.chat.type}")
+        
+        # 如果是私聊消息，显示但不记录
         if message.chat.type not in ['group', 'supergroup']:
+            print(f"💭 私聊消息（不记录到文件）", flush=True)
+            # 对于调试，我们仍然继续处理，但不保存
+            print(f"🔍 调试：这是一条私聊消息", flush=True)
             return
         
         # 检查是否允许记录此群组
         if not self._is_allowed_chat(message.chat.id):
+            print(f"🚫 群组不在允许列表中: {message.chat.id}", flush=True)
             return
         
         try:
@@ -188,13 +215,39 @@ class TelegramNoteTaker:
                 # 保存消息
                 self.storage.save_message(message_data)
                 
-                self.logger.debug(
+                print(f"✅ 消息已保存: {message_data['chat_title']} - {message_data['first_name']}", flush=True)
+                
+                self.logger.info(
                     f"记录消息: {message_data['chat_title']} - "
                     f"{message_data['first_name']}: {message_data['message_text'][:50]}"
                 )
+            else:
+                print(f"⚠️ 消息被过滤，未保存", flush=True)
         
         except Exception as e:
+            print(f"❌ 处理消息时发生错误: {e}", flush=True)
             self.logger.error(f"处理消息时发生错误: {e}")
+    
+    def _get_message_type_description(self, message: Message) -> str:
+        """获取消息类型描述"""
+        if message.photo:
+            return "图片"
+        elif message.video:
+            return "视频"
+        elif message.audio:
+            return "音频"
+        elif message.voice:
+            return "语音消息"
+        elif message.document:
+            return f"文档 ({message.document.file_name})"
+        elif message.sticker:
+            return "贴纸"
+        elif message.location:
+            return "位置信息"
+        elif message.contact:
+            return "联系人"
+        else:
+            return "其他类型"
     
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /start 命令"""
@@ -207,8 +260,11 @@ class TelegramNoteTaker:
 
 我是一个群组消息记录机器人，会自动记录群组中的所有消息。
 
-管理员命令：
+基本命令：
 /start - 显示此帮助信息
+/myid - 获取你的 Telegram 用户 ID
+
+管理员命令：
 /stats - 显示群组统计信息
 /status - 显示机器人状态
 /summary [日期|天数] - 生成总结（例如：/summary 1 或 /summary 2024-01-01）
@@ -218,6 +274,43 @@ class TelegramNoteTaker:
         """
         
         await message.reply_text(welcome_text)
+    
+    async def myid_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /myid 命令 - 获取用户ID"""
+        message = update.message
+        if not message:
+            return
+        
+        user = message.from_user
+        if not user:
+            return
+        
+        # 构建用户信息
+        user_info = f"""
+🆔 **你的 Telegram 信息**
+
+👤 用户 ID: `{user.id}`
+📛 名字: {user.first_name}
+"""
+        
+        if user.last_name:
+            user_info += f"📛 姓氏: {user.last_name}\n"
+        
+        if user.username:
+            user_info += f"🏷️ 用户名: @{user.username}\n"
+        
+        user_info += f"""
+🤖 是否为机器人: {'是' if user.is_bot else '否'}
+
+📋 **配置说明**:
+要将你设为管理员，请在 .env 文件中设置：
+`ADMIN_IDS={user.id}`
+
+如果有多个管理员，用逗号分隔：
+`ADMIN_IDS={user.id},其他用户ID`
+"""
+        
+        await message.reply_text(user_info)
     
     async def stats_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /stats 命令"""
@@ -421,13 +514,14 @@ class TelegramNoteTaker:
         # 创建应用程序
         application = Application.builder().token(self.config.BOT_TOKEN).build()
         
-        # 初始化任务调度器
+        # 初始化任务调度器（但不立即启动异步任务）
         if self.config.ENABLE_AI_SUMMARY:
             self.scheduler = TaskScheduler(application)
             self.scheduler.start()
         
         # 添加处理器
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("status", self.status_command))
         
@@ -443,6 +537,24 @@ class TelegramNoteTaker:
         ))
         
         self.logger.info("Bot 已启动，正在监听消息...")
+        print("🤖 Bot 已启动，正在监听消息...", flush=True)
+        print("📋 配置信息:", flush=True)
+        allowed_groups = self.config.get_allowed_groups()
+        print(f"   - 允许的群组: {allowed_groups if allowed_groups else '所有群组'}", flush=True)
+        print(f"   - 管理员: {self.config.get_admin_ids()}", flush=True)
+        print("=" * 50, flush=True)
+        
+        # 注册启动和关闭回调
+        async def post_init(application):
+            if self.scheduler:
+                await self.scheduler.start_async()
+        
+        async def post_shutdown(application):
+            if self.scheduler:
+                self.scheduler.stop()
+        
+        application.post_init = post_init
+        application.post_shutdown = post_shutdown
         
         try:
             # 启动机器人
