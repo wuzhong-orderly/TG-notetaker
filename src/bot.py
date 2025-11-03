@@ -371,9 +371,10 @@ class TelegramNoteTaker:
             await message.reply_text("⚠️ 只有管理员可以使用此命令")
             return
         
-        # 只在群组中使用
-        if message.chat.type not in ['group', 'supergroup']:
-            await message.reply_text("⚠️ 此命令只能在群组中使用")
+        # 支持群组和私聊
+        if message.chat.type in ['private']:
+            # 私聊中显示群组选择界面
+            await self._show_summary_group_selection(message, context.args)
             return
         
         if not self.config.ENABLE_AI_SUMMARY or not self.ai_summarizer:
@@ -415,7 +416,7 @@ class TelegramNoteTaker:
                     summary, chat_title, target_date, len(messages)
                 )
                 
-                await message.reply_text(formatted_summary, parse_mode='Markdown')
+                await self._safe_send_text(message, formatted_summary)
             else:
                 date_str = target_date.strftime('%Y-%m-%d')
                 await message.reply_text(f"❌ 无法生成 {date_str} 的总结（消息数量不足或其他错误）")
@@ -435,9 +436,10 @@ class TelegramNoteTaker:
             await message.reply_text("⚠️ 只有管理员可以使用此命令")
             return
         
-        # 只在群组中使用
-        if message.chat.type not in ['group', 'supergroup']:
-            await message.reply_text("⚠️ 此命令只能在群组中使用")
+        # 支持群组和私聊
+        if message.chat.type in ['private']:
+            # 私聊中显示群组选择界面
+            await self._show_history_group_selection(message)
             return
         
         if not self.config.ENABLE_AI_SUMMARY or not self.ai_summarizer:
@@ -452,19 +454,48 @@ class TelegramNoteTaker:
                 await message.reply_text("📝 暂无历史总结记录")
                 return
             
-            history_text = "📚 **最近的总结历史**\n\n"
-            
-            for summary in summaries:
+            if len(summaries) == 1:
+                # 如果只有一个总结，显示完整内容
+                summary = summaries[0]
                 date = summary.get('date', '未知日期')
                 message_count = summary.get('message_count', 0)
                 generated_at = summary.get('generated_at', '未知时间')
+                summary_content = summary.get('summary', '总结内容不可用')
                 
-                history_text += f"📅 **{date}**\n"
-                history_text += f"💬 消息数: {message_count}\n"
-                history_text += f"⏰ 生成时间: {generated_at}\n"
-                history_text += "---\n"
+                # 限制总结长度
+                if len(summary_content) > 3500:
+                    summary_content = summary_content[:3500] + "\n\n... (总结已截断)"
+                
+                history_text = f"""� {date} 总结
+
+{summary_content}
+
+---
+📊 消息数: {message_count} 条
+⏰ 生成时间: {generated_at}"""
             
-            await message.reply_text(history_text, parse_mode='Markdown')
+            else:
+                # 如果有多个总结，显示列表和最新的一个完整总结
+                latest_summary = summaries[0]  # 最新的总结
+                latest_content = latest_summary.get('summary', '总结内容不可用')
+                
+                if len(latest_content) > 2000:
+                    latest_content = latest_content[:2000] + "\n\n... (总结已截断)"
+                
+                history_text = f"📚 最近的总结历史 (共{len(summaries)}条)\n\n"
+                history_text += f"� 最新总结 - {latest_summary.get('date', '未知日期')}:\n"
+                history_text += f"{latest_content}\n\n"
+                history_text += "📋 历史记录:\n"
+                
+                for i, summary in enumerate(summaries[:3], 1):
+                    date = summary.get('date', '未知日期')
+                    message_count = summary.get('message_count', 0)
+                    history_text += f"{i}. {date} ({message_count}条消息)\n"
+                
+                if len(summaries) > 3:
+                    history_text += f"... 还有 {len(summaries) - 3} 条历史记录"
+            
+            await self._safe_send_text(message, history_text)
         
         except Exception as e:
             self.logger.error(f"获取总结历史时发生错误: {e}")
@@ -548,7 +579,7 @@ class TelegramNoteTaker:
 👆 请点击下方按钮进行操作
         """
         
-        await message.reply_text(menu_text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self._safe_send_text(message, menu_text, reply_markup=reply_markup)
     
     async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理按钮回调"""
@@ -589,6 +620,21 @@ class TelegramNoteTaker:
         elif data == "back_main":
             # 返回主菜单
             await self.menu_command(update, context)
+        elif data.startswith("sum_"):
+            # 处理私聊中的总结请求
+            parts = data.split("_")
+            if len(parts) >= 3:
+                chat_id = int(parts[1])
+                date_param = parts[2]
+                await self._handle_private_summary(query, chat_id, date_param)
+        elif data.startswith("hist_"):
+            # 处理私聊中的历史总结请求
+            parts = data.split("_")
+            if len(parts) >= 2:
+                chat_id = int(parts[1])
+                await self._handle_private_history(query, chat_id)
+        elif data == "cancel":
+            await query.edit_message_text("❌ 操作已取消")
     
     async def _show_group_selection(self, query, period: str):
         """显示群组选择界面"""
@@ -621,7 +667,7 @@ class TelegramNoteTaker:
 👆 请选择一个群组来生成实时AI总结
         """
         
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self._safe_send_text(query, text, reply_markup=reply_markup)
     
     async def _show_saved_summary_options(self, query):
         """显示已保存总结的选项"""
@@ -647,7 +693,7 @@ class TelegramNoteTaker:
 👆 请选择时间范围
         """
         
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+        await self._safe_send_text(query, text, reply_markup=reply_markup)
     
     async def _generate_realtime_summary(self, query, chat_id: int, period: str):
         """生成实时总结"""
@@ -735,7 +781,7 @@ class TelegramNoteTaker:
             keyboard = [[InlineKeyboardButton("🔙 返回主菜单", callback_data="back_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            await self._safe_send_text(query, text, reply_markup=reply_markup)
             
         except Exception as e:
             self.logger.error(f"获取已保存总结时出错: {e}")
@@ -813,6 +859,218 @@ class TelegramNoteTaker:
         """获取群组名称"""
         groups = self._get_available_groups()
         return groups.get(chat_id, {}).get('title', f'群组 {chat_id}')
+    
+    def _escape_markdown(self, text: str) -> str:
+        """转义Markdown特殊字符"""
+        # 转义Markdown特殊字符
+        special_chars = ['*', '_', '`', '[', ']', '(', ')', '~', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f'\\{char}')
+        return text
+    
+    async def _safe_send_text(self, message_or_query, text: str, reply_markup=None, use_markdown=False):
+        """安全地发送文本，处理Markdown解析错误"""
+        try:
+            if use_markdown:
+                if hasattr(message_or_query, 'reply_text'):
+                    await message_or_query.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+                else:
+                    await message_or_query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
+            else:
+                if hasattr(message_or_query, 'reply_text'):
+                    await message_or_query.reply_text(text, reply_markup=reply_markup)
+                else:
+                    await message_or_query.edit_message_text(text, reply_markup=reply_markup)
+        except Exception as e:
+            # 如果Markdown解析失败，尝试不使用格式化
+            self.logger.warning(f"Markdown解析失败，使用纯文本: {e}")
+            # 移除所有Markdown格式
+            clean_text = text.replace('**', '').replace('*', '').replace('_', '').replace('`', '')
+            if hasattr(message_or_query, 'reply_text'):
+                await message_or_query.reply_text(clean_text, reply_markup=reply_markup)
+            else:
+                await message_or_query.edit_message_text(clean_text, reply_markup=reply_markup)
+    
+    async def _show_summary_group_selection(self, message: Message, args: list):
+        """在私聊中显示群组选择界面（用于summary命令）"""
+        available_groups = self._get_available_groups()
+        
+        if not available_groups:
+            await message.reply_text("❌ 没有找到可用的群组数据")
+            return
+        
+        # 解析日期参数
+        date_info = ""
+        if args:
+            try:
+                if args[0].isdigit():
+                    days_ago = int(args[0])
+                    target_date = datetime.now() - timedelta(days=days_ago)
+                    date_info = f" ({days_ago}天前: {target_date.strftime('%Y-%m-%d')})"
+                else:
+                    target_date = datetime.strptime(args[0], '%Y-%m-%d')
+                    date_info = f" ({args[0]})"
+            except ValueError:
+                await message.reply_text("⚠️ 日期格式错误，请使用 YYYY-MM-DD 或天数")
+                return
+        else:
+            date_info = " (昨天)"
+        
+        keyboard = []
+        for chat_id, group_info in available_groups.items():
+            group_name = group_info.get('title', f'群组 {chat_id}')[:30]
+            # 创建回调数据，包含日期参数
+            date_param = args[0] if args else "1"  # 默认1天前
+            callback_data = f"sum_{chat_id}_{date_param}"
+            keyboard.append([InlineKeyboardButton(f"📱 {group_name}", callback_data=callback_data)])
+        
+        keyboard.append([InlineKeyboardButton("❌ 取消", callback_data="cancel")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = f"""
+📊 **选择要生成总结的群组**{date_info}
+
+以下是有消息记录的群组：
+
+👆 请选择一个群组来生成总结
+        """
+        
+        await self._safe_send_text(message, text, reply_markup=reply_markup)
+    
+    async def _show_history_group_selection(self, message: Message):
+        """在私聊中显示群组选择界面（用于summary_history命令）"""
+        available_groups = self._get_available_groups()
+        
+        if not available_groups:
+            await message.reply_text("❌ 没有找到可用的群组数据")
+            return
+        
+        keyboard = []
+        for chat_id, group_info in available_groups.items():
+            group_name = group_info.get('title', f'群组 {chat_id}')[:30]
+            callback_data = f"hist_{chat_id}"
+            keyboard.append([InlineKeyboardButton(f"📱 {group_name}", callback_data=callback_data)])
+        
+        keyboard.append([InlineKeyboardButton("❌ 取消", callback_data="cancel")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        text = """
+📚 **选择要查看历史总结的群组**
+
+以下是有消息记录的群组：
+
+👆 请选择一个群组来查看总结历史
+        """
+        
+        await self._safe_send_text(message, text, reply_markup=reply_markup)
+    
+    async def _handle_private_summary(self, query, chat_id: int, date_param: str):
+        """处理私聊中的总结请求"""
+        await query.edit_message_text("🤖 正在生成总结，请稍候...")
+        
+        try:
+            # 解析日期参数
+            if date_param.isdigit():
+                days_ago = int(date_param)
+                target_date = datetime.now() - timedelta(days=days_ago)
+            else:
+                target_date = datetime.strptime(date_param, '%Y-%m-%d')
+            
+            # 生成总结
+            if self.ai_summarizer:
+                summary = await self.ai_summarizer.generate_daily_summary(chat_id, target_date)
+                
+                if summary:
+                    # 获取群组名称
+                    group_name = self._get_group_name(chat_id)
+                    date_str = target_date.strftime('%Y-%m-%d')
+                    
+                    # 限制总结长度
+                    if len(summary) > 4000:
+                        summary = summary[:4000] + "\n\n... (总结已截断)"
+                    
+                    result_text = f"""
+📊 **{group_name} - {date_str} 总结**
+
+{summary}
+
+---
+⏰ 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+                    """
+                    
+                    await query.edit_message_text(result_text)
+                else:
+                    await query.edit_message_text(f"❌ 无法生成 {target_date.strftime('%Y-%m-%d')} 的总结（消息数量不足或其他错误）")
+            else:
+                await query.edit_message_text("❌ AI总结服务不可用")
+                
+        except ValueError:
+            await query.edit_message_text("❌ 日期格式错误")
+        except Exception as e:
+            self.logger.error(f"私聊总结生成错误: {e}")
+            await query.edit_message_text(f"❌ 生成总结时发生错误: {str(e)}")
+    
+    async def _handle_private_history(self, query, chat_id: int):
+        """处理私聊中的历史总结请求"""
+        await query.edit_message_text("📚 正在获取历史总结，请稍候...")
+        
+        try:
+            if self.ai_summarizer:
+                # 获取历史总结
+                summaries = self.ai_summarizer.get_summary_history(chat_id, 7)
+                
+                if not summaries:
+                    group_name = self._get_group_name(chat_id)
+                    await query.edit_message_text(f"📝 {group_name} 暂无历史总结记录")
+                    return
+                
+                group_name = self._get_group_name(chat_id)
+                
+                if len(summaries) == 1:
+                    # 如果只有一个总结，显示完整内容
+                    summary = summaries[0]
+                    date = summary.get('date', '未知日期')
+                    message_count = summary.get('message_count', 0)
+                    generated_at = summary.get('generated_at', '未知时间')
+                    summary_content = summary.get('summary', '总结内容不可用')
+                    
+                    # 限制总结长度以适应Telegram消息限制
+                    if len(summary_content) > 3500:
+                        summary_content = summary_content[:3500] + "\n\n... (总结已截断)"
+                    
+                    history_text = f"""📚 {group_name} - {date} 总结
+
+{summary_content}
+
+---
+📊 消息数: {message_count} 条
+⏰ 生成时间: {generated_at}"""
+                
+                else:
+                    # 如果有多个总结，显示列表
+                    history_text = f"📚 {group_name} - 最近的总结历史\n\n"
+                    
+                    for i, summary in enumerate(summaries[:3], 1):  # 最多显示3个
+                        date = summary.get('date', '未知日期')
+                        message_count = summary.get('message_count', 0)
+                        generated_at = summary.get('generated_at', '未知时间')
+                        
+                        history_text += f"{i}. 📅 {date}\n"
+                        history_text += f"   💬 消息数: {message_count}\n"
+                        history_text += f"   ⏰ 生成时间: {generated_at}\n\n"
+                    
+                    if len(summaries) > 3:
+                        history_text += f"... 还有 {len(summaries) - 3} 个历史总结\n\n"
+                    
+                    history_text += "💡 提示：选择特定日期可查看完整总结内容"
+                
+                await self._safe_send_text(query, history_text)
+            else:
+                await query.edit_message_text("❌ AI总结服务不可用")
+                
+        except Exception as e:
+            self.logger.error(f"获取历史总结错误: {e}")
+            await query.edit_message_text(f"❌ 获取历史总结失败: {str(e)}")
     
     def run(self):
         """启动机器人"""
