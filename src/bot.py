@@ -263,6 +263,7 @@ class TelegramNoteTaker:
 基本命令：
 /start - 显示此帮助信息
 /myid - 获取你的 Telegram 用户 ID
+/menu - 打开交互式菜单界面 🔥
 
 管理员命令：
 /stats - 显示群组统计信息
@@ -270,10 +271,23 @@ class TelegramNoteTaker:
 /summary [日期|天数] - 生成总结（例如：/summary 1 或 /summary 2024-01-01）
 /summary_history - 查看总结历史
 
+🎮 **推荐使用 /menu 命令获取完整功能菜单！**
+
+功能特色：
+📊 实时24小时/3天总结
+🔥 生成今日24小时总结（自动保存）
+📋 查看已保存的历史总结
+⏰ 每日00:00自动生成总结
+
 将我添加到群组中，我就会开始记录消息！
         """
         
         await message.reply_text(welcome_text)
+    
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """处理 /help 命令"""
+        # help 命令与 start 命令显示相同内容
+        await self.start_command(update, context)
     
     async def myid_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """处理 /myid 命令 - 获取用户ID"""
@@ -560,7 +574,10 @@ class TelegramNoteTaker:
                 InlineKeyboardButton("📈 获取3天总结", callback_data="summary_3d")
             ],
             [
-                InlineKeyboardButton("📋 查看已保存的总结", callback_data="get_saved")
+                InlineKeyboardButton("� 生成今日24小时总结", callback_data="generate_today")
+            ],
+            [
+                InlineKeyboardButton("�📋 查看已保存的总结", callback_data="get_saved")
             ],
             [
                 InlineKeyboardButton("❌ 关闭菜单", callback_data="close_menu")
@@ -574,7 +591,8 @@ class TelegramNoteTaker:
 请选择您需要的功能：
 
 📊 **实时总结** - 分析最新的对话记录
-📋 **已保存总结** - 查看历史总结记录
+� **生成今日总结** - 生成过去24小时总结并保存
+�📋 **已保存总结** - 查看历史总结记录
 
 👆 请点击下方按钮进行操作
         """
@@ -601,6 +619,8 @@ class TelegramNoteTaker:
             await self._show_group_selection(query, "24h")
         elif data == "summary_3d":
             await self._show_group_selection(query, "3d")
+        elif data == "generate_today":
+            await self._show_group_selection(query, "today")
         elif data == "get_saved":
             await self._show_saved_summary_options(query)
         elif data.startswith("group_"):
@@ -697,7 +717,12 @@ class TelegramNoteTaker:
     
     async def _generate_realtime_summary(self, query, chat_id: int, period: str):
         """生成实时总结"""
-        period_text = "24小时" if period == "24h" else "3天"
+        if period == "today":
+            period_text = "今日24小时"
+        elif period == "24h":
+            period_text = "24小时"
+        else:
+            period_text = "3天"
         
         # 显示处理中消息
         await query.edit_message_text(f"🤖 正在生成{period_text}总结，请稍候...")
@@ -706,6 +731,8 @@ class TelegramNoteTaker:
             # 计算日期范围
             end_date = datetime.now()
             if period == "24h":
+                start_date = end_date - timedelta(days=1)
+            elif period == "today":
                 start_date = end_date - timedelta(days=1)
             else:  # 3d
                 start_date = end_date - timedelta(days=3)
@@ -725,7 +752,12 @@ class TelegramNoteTaker:
             
             # 使用AI生成总结
             if self.ai_summarizer:
-                summary = await self.ai_summarizer.generate_daily_summary(chat_id, end_date)
+                if period == "today":
+                    # 使用新的今日总结方法，会自动保存到当天的文件
+                    summary = await self.scheduler.generate_today_summary(chat_id)
+                else:
+                    # 普通的实时总结，不保存
+                    summary = await self.ai_summarizer.generate_daily_summary(chat_id, end_date)
                 
                 if summary:
                     # 限制总结长度以适应Telegram消息限制
@@ -733,10 +765,15 @@ class TelegramNoteTaker:
                         summary = summary[:4000] + "\n\n... (总结已截断)"
                     
                     group_name = self._get_group_name(chat_id)
+                    
+                    # 为today类型添加保存提示
+                    save_note = "\n💾 **此总结已自动保存到历史记录**" if period == "today" else ""
+                    
                     result_text = f"""
-📊 **{group_name} - {period_text}实时总结**
+📊 **{group_name} - {period_text}总结**
 
 {summary}
+{save_note}
 
 ---
 ⏰ 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -1086,6 +1123,7 @@ class TelegramNoteTaker:
         
         # 添加处理器
         application.add_handler(CommandHandler("start", self.start_command))
+        application.add_handler(CommandHandler("help", self.help_command))
         application.add_handler(CommandHandler("myid", self.myid_command))
         application.add_handler(CommandHandler("stats", self.stats_command))
         application.add_handler(CommandHandler("status", self.status_command))

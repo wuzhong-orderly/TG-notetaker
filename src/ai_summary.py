@@ -201,6 +201,17 @@ class AISummarizer:
         
         return messages
     
+    def get_messages_for_24h(self, chat_id: int) -> List[Dict]:
+        """获取过去24小时的消息"""
+        messages = []
+        
+        if self.config.STORAGE_FORMAT == 'sqlite':
+            messages = self._get_messages_24h_from_sqlite(chat_id)
+        elif self.config.STORAGE_FORMAT == 'json':
+            messages = self._get_messages_24h_from_json(chat_id)
+        
+        return messages
+    
     def _get_messages_from_sqlite(self, chat_id: int, target_date: datetime) -> List[Dict]:
         """从 SQLite 获取消息"""
         import sqlite3
@@ -211,6 +222,34 @@ class AISummarizer:
         
         start_date = target_date.strftime('%Y-%m-%d 00:00:00')
         end_date = target_date.strftime('%Y-%m-%d 23:59:59')
+        
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                SELECT * FROM messages 
+                WHERE chat_id = ? AND timestamp BETWEEN ? AND ?
+                ORDER BY timestamp ASC
+            ''', (chat_id, start_date, end_date))
+            
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+    
+    def _get_messages_24h_from_sqlite(self, chat_id: int) -> List[Dict]:
+        """从 SQLite 获取过去24小时的消息"""
+        import sqlite3
+        
+        db_path = os.path.join(self.config.DATA_DIR, 'messages.db')
+        if not os.path.exists(db_path):
+            return []
+        
+        # 计算过去24小时的时间范围
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=24)
+        
+        start_date = start_time.strftime('%Y-%m-%d %H:%M:%S')
+        end_date = end_time.strftime('%Y-%m-%d %H:%M:%S')
         
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -250,6 +289,40 @@ class AISummarizer:
         
         return sorted(messages, key=lambda x: x.get('timestamp', ''))
     
+    def _get_messages_24h_from_json(self, chat_id: int) -> List[Dict]:
+        """从 JSON 文件获取过去24小时的消息"""
+        messages = []
+        
+        # 计算过去24小时的时间范围
+        end_time = datetime.now()
+        start_time = end_time - timedelta(hours=24)
+        
+        # 需要检查可能涉及的日期文件（昨天和今天）
+        dates_to_check = [start_time.date(), end_time.date()]
+        
+        for check_date in set(dates_to_check):  # 去重
+            date_str = check_date.strftime(self.config.FILENAME_TIME_FORMAT)
+            pattern = f"chat_{abs(chat_id)}_{date_str}"
+            
+            for filename in os.listdir(self.config.DATA_DIR):
+                if filename.startswith(pattern) and filename.endswith('.json'):
+                    filepath = os.path.join(self.config.DATA_DIR, filename)
+                    try:
+                        with open(filepath, 'r', encoding='utf-8') as f:
+                            file_messages = json.load(f)
+                            # 过滤过去24小时的消息
+                            for msg in file_messages:
+                                try:
+                                    msg_time = datetime.strptime(msg['timestamp'], self.config.TIME_FORMAT)
+                                    if start_time <= msg_time <= end_time:
+                                        messages.append(msg)
+                                except (ValueError, KeyError):
+                                    continue
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        continue
+        
+        return sorted(messages, key=lambda x: x.get('timestamp', ''))
+    
     async def generate_daily_summary(self, chat_id: int, date: Optional[datetime] = None) -> Optional[str]:
         """生成每日总结"""
         if not self.config.ENABLE_AI_SUMMARY:
@@ -281,6 +354,37 @@ class AISummarizer:
         
         except Exception as e:
             self.logger.error(f"生成总结失败: {e}")
+            return None
+    
+    async def generate_today_summary(self, chat_id: int) -> Optional[str]:
+        """生成今日总结（过去24小时的消息，保存为今天的文件）"""
+        if not self.config.ENABLE_AI_SUMMARY:
+            self.logger.info("AI 总结功能未启用")
+            return None
+        
+        # 获取过去24小时的消息
+        messages = self.get_messages_for_24h(chat_id)
+        
+        if len(messages) < self.config.MIN_MESSAGES_FOR_SUMMARY:
+            self.logger.info(f"消息数量不足 ({len(messages)} < {self.config.MIN_MESSAGES_FOR_SUMMARY})，跳过总结")
+            return None
+        
+        # 获取群组标题
+        chat_title = messages[0].get('chat_title', f'Chat {abs(chat_id)}') if messages else f'Chat {abs(chat_id)}'
+        
+        try:
+            # 生成总结
+            summary = await self.provider.generate_summary(messages, chat_title)
+            
+            # 保存总结（使用今天的日期作为文件名）
+            today = datetime.now()
+            self._save_summary(chat_id, today, summary, len(messages))
+            
+            self.logger.info(f"成功生成今日总结: {chat_title} - {today.strftime('%Y-%m-%d')}")
+            return summary
+        
+        except Exception as e:
+            self.logger.error(f"生成今日总结失败: {e}")
             return None
     
     def _save_summary(self, chat_id: int, date: datetime, summary: str, message_count: int):

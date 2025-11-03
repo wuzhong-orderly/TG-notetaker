@@ -120,7 +120,7 @@ class TaskScheduler:
             self.logger.warning("AI 总结器未初始化")
             return
         
-        # 获取昨天的日期
+        # 获取昨天的日期（在00:00执行时，总结前一天的对话）
         yesterday = datetime.now() - timedelta(days=1)
         
         # 获取需要总结的群组列表
@@ -244,6 +244,24 @@ class TaskScheduler:
             return await self.ai_summarizer.generate_daily_summary(chat_id, date)
         except Exception as e:
             self.logger.error(f"手动总结失败: {e}")
+            return None
+    
+    async def generate_today_summary(self, chat_id: int) -> Optional[str]:
+        """生成今日(过去24小时)总结并保存到当天的文件"""
+        if not self.ai_summarizer:
+            return None
+        
+        try:
+            # 使用新的今日总结方法（过去24小时消息，保存为今天文件）
+            summary = await self.ai_summarizer.generate_today_summary(chat_id)
+            
+            if summary:
+                today = datetime.now()
+                self.logger.info(f"今日总结生成成功 - 群组: {chat_id}, 日期: {today.strftime('%Y-%m-%d')}")
+            
+            return summary
+        except Exception as e:
+            self.logger.error(f"生成今日总结失败: {e}")
             return None
     
     def get_summary_stats(self) -> dict:
