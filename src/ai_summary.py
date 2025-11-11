@@ -77,8 +77,12 @@ class OpenAIProvider(AIProvider):
 - {length_prompt}
 - {style_prompt}
 - 保持客观和准确
-- 突出重要信息和关键决定
-- 如果有行动项或待办事项，请单独列出
+- 提取最重要的信息和关键点
+
+请按照以下格式生成总结：
+
+**核心内容**
+- 列出主要讨论的话题、重要信息和关键决定
 
 聊天记录：
 {messages_text}
@@ -335,6 +339,8 @@ class AISummarizer:
         # 获取消息
         messages = self.get_messages_for_date(chat_id, date)
         
+        self.logger.info(f"获取到消息数量: {len(messages)}, 需要: {self.config.MIN_MESSAGES_FOR_SUMMARY}, 日期: {date.strftime('%Y-%m-%d')}")
+        
         if len(messages) < self.config.MIN_MESSAGES_FOR_SUMMARY:
             self.logger.info(f"消息数量不足 ({len(messages)} < {self.config.MIN_MESSAGES_FOR_SUMMARY})，跳过总结")
             return None
@@ -363,7 +369,9 @@ class AISummarizer:
             return None
         
         # 获取过去24小时的消息
+        self.logger.info(f"开始获取过去24小时的消息 - 群组: {chat_id}")
         messages = self.get_messages_for_24h(chat_id)
+        self.logger.info(f"获取到过去24小时消息数量: {len(messages)}")
         
         if len(messages) < self.config.MIN_MESSAGES_FOR_SUMMARY:
             self.logger.info(f"消息数量不足 ({len(messages)} < {self.config.MIN_MESSAGES_FOR_SUMMARY})，跳过总结")
@@ -371,10 +379,17 @@ class AISummarizer:
         
         # 获取群组标题
         chat_title = messages[0].get('chat_title', f'Chat {abs(chat_id)}') if messages else f'Chat {abs(chat_id)}'
+        self.logger.info(f"群组标题: {chat_title}, 消息数: {len(messages)}")
         
         try:
             # 生成总结
+            self.logger.info(f"开始调用AI生成总结...")
             summary = await self.provider.generate_summary(messages, chat_title)
+            self.logger.info(f"AI返回结果: {'成功' if summary else '失败(None)'}, 长度: {len(summary) if summary else 0}")
+            
+            if not summary:
+                self.logger.warning("AI返回了空总结")
+                return None
             
             # 保存总结（使用今天的日期作为文件名）
             today = datetime.now()
@@ -385,6 +400,8 @@ class AISummarizer:
         
         except Exception as e:
             self.logger.error(f"生成今日总结失败: {e}")
+            import traceback
+            self.logger.error(f"错误堆栈: {traceback.format_exc()}")
             return None
     
     def _save_summary(self, chat_id: int, date: datetime, summary: str, message_count: int):

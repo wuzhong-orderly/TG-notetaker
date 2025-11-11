@@ -220,17 +220,25 @@ class TaskScheduler:
                 summary, chat_title, date, len(messages)
             )
             
-            # 发送到群组
+            # 确定发送目标：优先使用配置的报告群组，否则发送到原群组
+            target_chat_id = self.config.get_summary_report_chat_id()
+            if target_chat_id == 0:
+                target_chat_id = chat_id
+            
+            # 发送到目标群组
             await self.telegram_app.bot.send_message(
-                chat_id=chat_id,
+                chat_id=target_chat_id,
                 text=formatted_summary,
                 parse_mode='Markdown'
             )
             
-            self.logger.info(f"总结已发送到群组 {chat_id}")
+            if target_chat_id != chat_id:
+                self.logger.info(f"总结已从群组 {chat_id} 发送到报告群组 {target_chat_id}")
+            else:
+                self.logger.info(f"总结已发送到群组 {chat_id}")
             
         except Exception as e:
-            self.logger.error(f"发送总结到群组 {chat_id} 失败: {e}")
+            self.logger.error(f"发送总结失败 (源群组: {chat_id}): {e}")
     
     async def manual_summary(self, chat_id: int, date: Optional[datetime] = None) -> Optional[str]:
         """手动触发总结"""

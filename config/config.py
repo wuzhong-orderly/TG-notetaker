@@ -121,6 +121,16 @@ class Config:
     
     # 是否在群组中发送总结
     SEND_SUMMARY_TO_CHAT: bool = os.getenv('SEND_SUMMARY_TO_CHAT', 'false').lower() == 'true'
+    
+    # 总结报告发送到的特定群组ID（如果不设置，则发送到原群组）
+    @classmethod
+    def get_summary_report_chat_id(cls) -> int:
+        chat_id_str = os.getenv('SUMMARY_REPORT_CHAT_ID', '')
+        if chat_id_str and chat_id_str.strip().lstrip('-').isdigit():
+            return int(chat_id_str.strip())
+        return 0
+    
+    SUMMARY_REPORT_CHAT_ID: int = 0  # 将在运行时动态获取
 
     @classmethod
     def validate(cls) -> bool:
