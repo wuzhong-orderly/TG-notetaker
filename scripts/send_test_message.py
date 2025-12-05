@@ -8,7 +8,7 @@ import asyncio
 from datetime import datetime
 
 # 添加项目根目录到 Python 路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config.config import Config
 from telegram import Bot

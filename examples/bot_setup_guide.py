@@ -47,7 +47,7 @@ print("4. 查看bot是否有反应")
 print()
 
 print("📞 **调试命令**:")
-print("python diagnose_group.py  # 运行群组诊断工具")
+print("python scripts/diagnose_group.py  # 运行群组诊断工具")
 print("python src/bot.py         # 启动bot并观察输出")
 print()
 

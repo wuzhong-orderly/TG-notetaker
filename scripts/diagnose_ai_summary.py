@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import asyncio
 
 # 添加项目根目录到路径
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config.config import Config
 from src.storage import MessageStorage

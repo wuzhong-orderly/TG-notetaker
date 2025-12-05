@@ -20,7 +20,7 @@ class TaskScheduler:
     
     def __init__(self, telegram_app=None):
         self.config = Config()
-        self.logger = logging.getLogger('task_scheduler')
+        self.logger = logging.getLogger('telegram_notetaker.scheduler')
         self.telegram_app = telegram_app
         self.ai_summarizer = create_ai_summarizer()
         self.running = False

@@ -6,7 +6,7 @@ Bot状态和权限检查工具
 import asyncio
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from telegram import Bot
 from telegram.error import TelegramError

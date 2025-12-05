@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ```bash
 # 运行配置测试
-python test_config.py
+python tests/test_config.py
 ```
 
 ## 5. 启动机器人

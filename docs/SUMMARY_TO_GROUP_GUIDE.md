@@ -17,7 +17,7 @@
 **方法一：使用辅助脚本（推荐）**
 
 ```bash
-python get_chat_id.py
+python scripts/get_chat_id.py
 ```
 
 然后：
@@ -139,7 +139,7 @@ SEND_SUMMARY_TO_CHAT=false
 运行以下命令验证配置：
 
 ```bash
-python test_config.py
+python tests/test_config.py
 ```
 
 检查输出中的：
@@ -163,7 +163,7 @@ python test_config.py
 
 **解决：**
 1. 将bot添加到目标群组
-2. 使用 `get_chat_id.py` 重新获取群组ID
+2. 使用 `scripts/get_chat_id.py` 重新获取群组ID
 3. 更新 `.env` 配置
 
 ### 问题3：总结发送失败
@@ -203,4 +203,4 @@ tail -f logs/telegram_notetaker.log
 - 📝 配置文件: `.env`
 - ⚙️ 配置类: `config/config.py`
 - 🤖 调度器: `src/scheduler.py`
-- 🔧 获取ID工具: `get_chat_id.py`
+- 🔧 获取ID工具: `scripts/get_chat_id.py`

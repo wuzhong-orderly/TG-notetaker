@@ -220,7 +220,8 @@ async def test_copilot_summarizer():
     print("="*50)
     
     # 加载今天的消息数据
-    data_dir = '/Users/wuzhongzhu/Documents/GitHub/demo-9357-old/TG-notetaker/data'
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, '..', 'data')
     message_files = [f for f in os.listdir(data_dir) if f.endswith('20251103.json')]
     
     async with CopilotAISummarizer() as summarizer:

@@ -48,4 +48,4 @@ echo "🚀 启动 Bot..."
 
 # 进入 src 目录并运行 Bot
 cd src
-python3 bot.py
+python bot.py
